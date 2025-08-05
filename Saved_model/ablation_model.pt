@@ -1,0 +1,89 @@
+import os
+import cv2
+import numpy as np
+import torch
+import lpips
+from skimage.metrics import structural_similarity as compare_ssim
+from tqdm import tqdm
+
+# === Metric Functions === #
+def calculate_cpsnr(img1, img2):
+    mse = np.mean((img1 - img2) ** 2)
+    if mse == 0:
+        return 100
+    max_pixel = 1.0
+    return 10 * np.log10((max_pixel ** 2) / mse)
+
+def calculate_ebcm(img1, img2):
+    edge1 = cv2.Laplacian(img1, cv2.CV_64F)
+    edge2 = cv2.Laplacian(img2, cv2.CV_64F)
+    return np.mean(np.abs(edge1 - edge2))
+
+# === Initialize LPIPS === #
+lpips_fn = lpips.LPIPS(net='vgg').cuda()
+
+# === Evaluation Function === #
+def evaluate_model(enhanced_dir, low_dir, high_dir):
+    cpsnr_list, ssim_list, lpips_list, ebcm_list = [], [], [], []
+    image_names = sorted(os.listdir(low_dir))
+
+    for img_name in tqdm(image_names, desc=f"Evaluating {os.path.basename(enhanced_dir)}"):
+        low_path = os.path.join(low_dir, img_name)
+        high_path = os.path.join(high_dir, img_name)
+        enhanced_path = os.path.join(enhanced_dir, img_name)
+
+        if not os.path.exists(enhanced_path):
+            continue
+
+        low_img = cv2.imread(low_path)
+        high_img = cv2.imread(high_path)
+        enh_img = cv2.imread(enhanced_path)
+
+        if low_img is None or high_img is None or enh_img is None:
+            continue
+
+        high_img = cv2.resize(high_img, (enh_img.shape[1], enh_img.shape[0]))
+
+        high_norm = high_img.astype(np.float32) / 255.0
+        enh_norm = enh_img.astype(np.float32) / 255.0
+
+        cpsnr = calculate_cpsnr(high_norm, enh_norm)
+        ssim = compare_ssim(high_img, enh_img, multichannel=True)
+        ebcm = calculate_ebcm(high_img, enh_img)
+
+        high_tensor = torch.tensor(high_norm).permute(2, 0, 1).unsqueeze(0).cuda() * 2 - 1
+        enh_tensor = torch.tensor(enh_norm).permute(2, 0, 1).unsqueeze(0).cuda() * 2 - 1
+        lpips_score = lpips_fn(high_tensor, enh_tensor).item()
+
+        cpsnr_list.append(cpsnr)
+        ssim_list.append(ssim)
+        lpips_list.append(lpips_score)
+        ebcm_list.append(ebcm)
+
+    return {
+        'C-PSNR': np.mean(cpsnr_list),
+        'SSIM': np.mean(ssim_list),
+        'LPIPS': np.mean(lpips_list),
+        'EBCM': np.mean(ebcm_list)
+    }
+# === Define Paths === #
+low_dir = "/content/cvccolondbsplit/test/low"
+high_dir = "/content/cvccolondbsplit/test/high"
+
+# ✅ Final selected models for ablation
+model_outputs = {
+    "BaselineUNet":   "outputs/baselineunet",
+    "CBAMUNet":       "outputs/cbam_unet",
+    "RDBUNet":        "outputs/rdbunet",
+    "CBAM_RDB_UNet":  "outputs/cbamrdbunet"
+}
+# === Run Evaluation === #
+results = {}
+for model_name, enh_dir in model_outputs.items():
+    results[model_name] = evaluate_model(enh_dir, low_dir, high_dir)
+# === Print Results === #
+print("\n📊 Ablation Study Results:")
+for model_name, metrics in results.items():
+    print(f"\n{model_name}:")
+    for metric_name, value in metrics.items():
+        print(f"  {metric_name}: {value:.4f}")
