@@ -66,56 +66,57 @@ class ResidualDenseBlock(nn.Module):
 
 # ===== CBAM-RDB-UNet ===== #
 class CBAM_RDB_UNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=1, base=64):
+    def __init__(self, in_channels=3, out_channels=1, base_channels=32, kernel_size=3):
         super().__init__()
+        k = kernel_size
 
         # Initial convolution
-        self.initial = nn.Conv2d(in_channels, base, kernel_size=3, padding=1)
+        self.initial = nn.Conv2d(in_channels, base_channels, kernel_size=k, padding=k//2)
 
         # Encoder
         self.enc1 = nn.Sequential(
-            ResidualDenseBlock(base),
-            CBAM(base)
+            ResidualDenseBlock(base_channels, k),
+            CBAM(base_channels)
         )
         self.enc2 = nn.Sequential(
-            ResidualDenseBlock(base * 2),
-            CBAM(base * 2)
+            ResidualDenseBlock(base_channels * 2, k),
+            CBAM(base_channels * 2)
         )
         self.enc3 = nn.Sequential(
-            ResidualDenseBlock(base * 4),
-            CBAM(base * 4)
+            ResidualDenseBlock(base_channels * 4, k),
+            CBAM(base_channels * 4)
         )
 
         # Bottleneck
         self.bottleneck = nn.Sequential(
-            ResidualDenseBlock(base * 8),
-            CBAM(base * 8)
+            ResidualDenseBlock(base_channels * 8, k),
+            CBAM(base_channels * 8)
         )
 
         # Downsampling
         self.pool = nn.MaxPool2d(2)
 
         # Upsampling
-        self.up3 = nn.ConvTranspose2d(base * 8, base * 4, kernel_size=2, stride=2)
-        self.up2 = nn.ConvTranspose2d(base * 4, base * 2, kernel_size=2, stride=2)
-        self.up1 = nn.ConvTranspose2d(base * 2, base, kernel_size=2, stride=2)
+        self.up3 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=2, stride=2)
+        self.up2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, kernel_size=2, stride=2)
+        self.up1 = nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=2, stride=2)
 
         # Decoder
         self.dec3 = nn.Sequential(
-            ResidualDenseBlock(base * 8),
-            CBAM(base * 8)
+            ResidualDenseBlock(base_channels * 8, k),
+            CBAM(base_channels * 8)
         )
         self.dec2 = nn.Sequential(
-            ResidualDenseBlock(base * 4),
-            CBAM(base * 4)
+            ResidualDenseBlock(base_channels * 4, k),
+            CBAM(base_channels * 4)
         )
         self.dec1 = nn.Sequential(
-            ResidualDenseBlock(base * 2),
-            CBAM(base * 2)
+            ResidualDenseBlock(base_channels * 2, k),
+            CBAM(base_channels * 2)
         )
 
         # Output layer
-        self.final = nn.Conv2d(base, out_channels, kernel_size=1)
+        self.final = nn.Conv2d(base_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
         x = self.initial(x)
@@ -130,4 +131,6 @@ class CBAM_RDB_UNet(nn.Module):
         d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
 
         out = self.final(d1)
-        return out  # Add torch.sigmoid(out) if output is [0,1] normalized
+        return out  # Optionally wrap with torch.sigmoid(out) if needed
+
+
