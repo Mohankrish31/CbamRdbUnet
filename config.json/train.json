@@ -1,0 +1,77 @@
+import os
+import torch
+import cv2
+import numpy as np
+from PIL import Image
+from torchvision import transforms
+
+# ✅ Import your model
+from models.cbam_rdb_unet import cbam_rdb_unet
+
+# -------- Config --------
+input_dir = "/content/cvccolondbsplit/train/low"     # <-- Training low-light images
+output_dir = "/content/outputs/train_enhanced"       # <-- Output folder
+model_path = "/content/saved_models/cbam_rdb_unet.pt"
+image_size = (224, 224)
+
+# -------- Make output dir --------
+os.makedirs(output_dir, exist_ok=True)
+
+# -------- Setup device --------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -------- Load model --------
+model = cbam_rdb_unet(in_channels=3, base_channels=32).to(device)
+model.load_state_dict(torch.load(model_path, map_location=device))
+model.eval()
+
+# -------- Preprocessing --------
+transform = transforms.Compose([
+    transforms.Resize(image_size),
+    transforms.ToTensor()
+])
+to_pil = transforms.ToPILImage()
+
+# -------- Post-processing (Optional but helpful) --------
+def apply_inverse_gamma(img, gamma=0.7):
+    inv_gamma = 1.0 / gamma
+    img = np.clip(img / 255.0, 0, 1)
+    corrected = np.power(img, inv_gamma)
+    return np.uint8(corrected * 255)
+
+def adjust_brightness_contrast(img, alpha=0.9, beta=-20):
+    return cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+
+def clahe_reduce_brightness(img):
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge((l, a, b))
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+def postprocess_bright_image(img):
+    img = apply_inverse_gamma(img, gamma=0.7)
+    img = adjust_brightness_contrast(img, alpha=0.9, beta=-20)
+    img = clahe_reduce_brightness(img)
+    return img
+
+# -------- Enhance & Save Training Images --------
+with torch.no_grad():
+    for fname in os.listdir(input_dir):
+        if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+            img_path = os.path.join(input_dir, fname)
+            img = Image.open(img_path).convert('RGB')
+            inp = transform(img).unsqueeze(0).to(device)
+
+            out = model(inp).squeeze().cpu().clamp(0, 1)
+            out_img = to_pil(out)
+
+            out_cv = np.array(out_img)
+            out_cv = postprocess_bright_image(out_cv)
+
+            final_img = Image.fromarray(out_cv)
+            final_img.save(os.path.join(output_dir, fname))
+            print(f"✅ Enhanced & saved (TRAIN): {fname}")
+
+print("🎉 All training images processed and saved to:", output_dir)
