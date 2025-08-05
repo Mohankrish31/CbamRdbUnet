@@ -1,0 +1,11 @@
+torch>=1.10
+torchvision>=0.11
+lpips>=0.1.4
+pytorch-msssim>=0.2.1
+numpy>=1.19
+Pillow>=8.0
+tqdm>=4.60
+matplotlib>=3.3
+opencv-python
+scikit-image
+imageio
